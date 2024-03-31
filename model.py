@@ -44,6 +44,26 @@ class PhotoSplatter(torch.nn):
         self.deform_net = DeformNet()
         self._deform_accum = torch.empty(0) # [N,3], how much each point has been cumulatively deformed over all iters
 
+        # training params
+        self.position_lr_init = args.position_lr_init
+        self.position_lr_final = args.position_lr_final
+        self.position_lr_delay_mult = args.position_lr_delay_mult
+        self.position_lr_max_steps = args.position_lr_max_steps
+
+        self.deformation_lr_init = args.deformation_lr_init
+        self.deformation_lr_final = args.deformation_lr_final
+        self.deformation_lr_delay_mult = args.deformation_lr_delay_mult
+
+        self.grid_lr_init = args.grid_lr_init
+        self.grid_lr_final = args.grid_lr_final
+
+        self.feature_lr = args.feature_lr
+        self.opacity_lr = args.opacity_lr
+        self.scaling_lr = args.scaling_lr
+        self.rotation_lr = args.rotation_lr
+
+        self.spatial_lr_scale = args.spatial_lr_scale
+
 
     def init_pts_photometric(self, img):
         #TODO
@@ -103,6 +123,32 @@ class PhotoSplatter(torch.nn):
         self.means_gradient_accum = torch.zeros((num_pts, 1), device='cuda')
         self.denom = torch.zeros((num_pts, 1), device='cuda')
         self._deform_accum = torch.zeros((num_pts,3),device='cuda')
+
+        training_params = [
+            {'params': [self._means], 'lr': self.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
+            {'params': list(self.deform_net.get_mlp_parameters()), 'lr': self.deformation_lr_init * self.spatial_lr_scale, "name": "deformation"},
+            {'params': list(self.deform_net.get_grid_parameters()), 'lr': self.grid_lr_init * self.spatial_lr_scale, "name": "grid"},
+            {'params': [self._feats_color], 'lr': self.feature_lr, "name": "f_color"},
+            {'params': [self._feats_rest], 'lr': self.feature_lr / 20.0, "name": "f_rest"},
+            {'params': [self._opacities], 'lr': self.opacity_lr, "name": "opacity"},
+            {'params': [self._scalings], 'lr': self.scaling_lr, "name": "scaling"},
+            {'params': [self._rotations], 'lr': self.rotation_lr, "name": "rotation"}
+        ]
+
+        self.optimizer = torch.optim.Adam(training_params, lr=0.0, eps=1e-15)
+        
+        self.xyz_scheduler_args = get_expon_lr_func(lr_init=self.position_lr_init*self.spatial_lr_scale,
+                                                    lr_final=self.position_lr_final*self.spatial_lr_scale,
+                                                    lr_delay_mult=self.position_lr_delay_mult,
+                                                    max_steps=self.position_lr_max_steps)
+        self.deformation_scheduler_args = get_expon_lr_func(lr_init=self.deformation_lr_init*self.spatial_lr_scale,
+                                                    lr_final=self.deformation_lr_final*self.spatial_lr_scale,
+                                                    lr_delay_mult=self.deformation_lr_delay_mult,
+                                                    max_steps=self.position_lr_max_steps) 
+        self.grid_scheduler_args = get_expon_lr_func(lr_init=self.grid_lr_init*self.spatial_lr_scale,
+                                                    lr_final=self.grid_lr_final*self.spatial_lr_scale,
+                                                    lr_delay_mult=self.deformation_lr_delay_mult,
+                                                    max_steps=self.position_lr_max_steps)   
 
 
     
