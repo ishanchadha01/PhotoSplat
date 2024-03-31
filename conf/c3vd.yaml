@@ -1,0 +1,22 @@
+quiet: False
+detect_anomaly: True
+
+model:
+
+
+training:
+  coarse_iters: 1000
+  fine_iters: 2000
+
+
+data_dir: "data/ct1a_given_poses"
+
+max_sh_degree: 3
+
+gaussian_init_method: "photometric"
+percent_dense: .01
+
+opacity_thresh_coarse_low: .005
+
+opacity_thresh_fine_low_start: .005
+opacity_thresh_fine_low_end: .005
