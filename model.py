@@ -3,7 +3,7 @@ import numpy as np
 import pycolmap
 from simple_knn._C import distCUDA2
 
-from utils.misc import PointCloud, inverse_sigmoid
+from utils.misc import PointCloud, inverse_sigmoid, get_expon_lr_func
 from utils.sh_utils import convert_rgb2sh
 
 

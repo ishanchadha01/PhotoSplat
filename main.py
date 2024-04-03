@@ -36,6 +36,10 @@ def main():
     with open(os.path.join(args.model_path, "cfg_args"), 'w') as cfg_log_f:
         cfg_log_f.write(str(Namespace(**vars(args))))
 
+    # Find depths
+    #TODO
+
+    # Create trainer and train
     trainer = Trainer(args)
     trainer.train()
     trainer.test()
