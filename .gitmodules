@@ -6,4 +6,4 @@
 	url = https://github.com/ingra14m/depth-diff-gaussian-rasterization
 [submodule "submodules/Depth-Anything"]
 	path = submodules/Depth-Anything
-	url =https://github.com/LiheYoung/Depth-Anything.git
+	url = https://github.com/LiheYoung/Depth-Anything.git
