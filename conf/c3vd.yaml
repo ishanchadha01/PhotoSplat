@@ -12,7 +12,7 @@ training:
 
 data_dir: "data/ct1a_given_poses"
 
-max_sh_degree: 3
+sh_degree: 3
 
 gaussian_init_method: "random"
 percent_dense: .01

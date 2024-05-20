@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import pycolmap
 
+import math
 from utils.misc import PointCloud, inverse_sigmoid, get_expon_lr_func, distCUDA2
 from utils.sh_utils import convert_rgb2sh
 
@@ -30,7 +31,7 @@ class PhotoSplatter(torch.nn.Module):
         self.means_gradient_accum = torch.empty(0) # [N] gradient accumulation for means 
         # to check if grad is high enough for densification
         self.denom = torch.empty(0) # [N] keeps track of number of points considered during densification
-        self.max_sh_degree = args.max_sh_degree
+        self.sh_degree = args.sh_degree
         self.initialize_gaussians()
 
         # optimization params
@@ -94,7 +95,7 @@ class PhotoSplatter(torch.nn.Module):
     def _init_from_pt_cloud(self, pt_cloud : PointCloud):
         fused_point_cloud = pt_cloud.points.float().cuda()
         fused_color = convert_rgb2sh(pt_cloud.colors.float().cuda())
-        features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda() # [N,3,sh_slots]
+        features = torch.zeros((fused_color.shape[0], 3, (self.sh_degree + 1) ** 2)).float().cuda() # [N,3,sh_slots]
         features[:, :3, 0 ] = fused_color # only color used for first sh slot, before using rgb2sh, [N,3,1]
         features[:, 3:, 1:] = 0.0
 
@@ -182,6 +183,43 @@ class PhotoSplatter(torch.nn.Module):
         self._rotations[idx] = self.rotations.pop()
         self._scalings[idx] = self.scalings.pop()
         self._opacities[idx] = self.opacities.pop()
+
+    def update_learning_rate(self, iteration):
+        ''' Learning rate scheduling per step '''
+        for param_group in self.optimizer.param_groups:
+            if "xyz" in param_group["name"]:
+                lr = self.xyz_scheduler_args(iteration)
+                param_group['lr'] = lr
+            if  "grid" in param_group["name"]:
+                lr = self.grid_scheduler_args(iteration)
+                param_group['lr'] = lr
+            if "deformation" in param_group["name"]:
+                lr = self.deformation_scheduler_args(iteration)
+                param_group['lr'] = lr
+
+    def render(self, camera, bg_color, is_fine, args):
+        screenspace_points = torch.zeros_like(self._means, dtype=self._means.dtype, requires_grad=True, device="cuda")
+        screenspace_points.retain_grad()
+
+        # Set up rasterization configuration
+        tanfovx = math.tan(camera.xfov * 0.5)
+        tanfovy = math.tan(camera.yfov * 0.5)
+        raster_settings = GaussianRasterizationSettings(
+            image_height=int(camera.image.shape[0]),
+            image_width=int(camera.image.shape[1]),
+            tanfovx=tanfovx,
+            tanfovy=tanfovy,
+            bg=bg_color,
+            scale_modifier=1.0,
+            viewmatrix=viewpoint_camera.world_view_transform.cuda(),
+            projmatrix=viewpoint_camera.full_proj_transform.cuda(),
+            sh_degree=pc.active_sh_degree,
+            campos=viewpoint_camera.camera_center.cuda(),
+            prefiltered=False,
+            debug=pipe.debug
+        )
+
+        rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
 
     

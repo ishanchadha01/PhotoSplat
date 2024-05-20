@@ -8,7 +8,7 @@ import cv2
 
 from model import PhotoSplatter
 from dataset import GSDataset
-from utils import Timer
+from utils.misc import Timer
 
 
 class Trainer:
@@ -52,11 +52,11 @@ class Trainer:
         
 
     def train(self):
-        self._train(self.coarse_iters)
-        self._train(self.fine_iters)
+        self._train(self.coarse_iters, is_fine=False)
+        self._train(self.fine_iters, is_fine=True)
 
 
-    def _train(self, num_iters):
+    def _train(self, num_iters, is_fine):
         """
         Main training loop
         """
@@ -67,13 +67,31 @@ class Trainer:
         self.timer.start()
 
         # train model
-        
+        bg_color = torch.tensor([1,1,1], dtype=torch.float32, device="cuda") #TODO: can we do this without cuda
         for iter in tqdm(range(num_iters)):
             pass
             # TODO
-            # run iter of model
-            # differentiable rasterization
+            self.model.update_learning_rate(iter)
+            if is_fine:
+                start_idx = np.random() * (len(self.dataset) - 1) # start at random point in sequence if fine iters
+            else:
+                start_idx = 0
+
+            for camera_idx in range(start_idx, len(self.dataset)):
+                camera = self.dataset[camera_idx]
+                render_dict = self.model.render(camera, bg_color, is_fine, args) #TODO: pass in specific args depending on whats required
+
+            
+
+
+            # for pose in poses traversed thus far (need to make sure poses are passed in with dataset)
+                # call render using current gaussian estimate
+            
+            # update params like lr and sh degree
+
+            # differentiable rasterization (TODO when does this happen? and when does deformation happen)
             # color and depth loss
+            # perform densification and pruning
         
             self.timer.pause()
             # log
