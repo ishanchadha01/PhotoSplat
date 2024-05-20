@@ -1,13 +1,12 @@
 import torch
 import numpy as np
 import pycolmap
-from simple_knn._C import distCUDA2
 
-from utils.misc import PointCloud, inverse_sigmoid, get_expon_lr_func
+from utils.misc import PointCloud, inverse_sigmoid, get_expon_lr_func, distCUDA2
 from utils.sh_utils import convert_rgb2sh
 
 
-class PhotoSplatter(torch.nn):
+class PhotoSplatter(torch.nn.Module):
     """
     """
 
@@ -65,7 +64,7 @@ class PhotoSplatter(torch.nn):
         self.spatial_lr_scale = args.spatial_lr_scale
 
 
-    def initialize_gaussians(self, method, img=None):
+    def initialize_gaussians(self, img=None):
         if self.init_method == 'colmap':
             pts = None
             # TODO: use pycolmap to extract features, perform exhaustive matching, and then get sparse pts as [N,3]
@@ -187,7 +186,7 @@ class PhotoSplatter(torch.nn):
 
     
 
-class DeformNet(torch.nn):
+class DeformNet(torch.nn.Module):
     def __init__(self):
         super().__init__()
         # create multires spatial delta feature planes

@@ -7,6 +7,7 @@ import math
 
 import torch
 import numpy as np
+from scipy.spatial import KDTree
 
 
 class PointCloud(NamedTuple):
@@ -136,3 +137,10 @@ def get_expon_lr_func(
 
 def get_focal2fov(focal, pixels):
     return 2*math.atan(pixels/(2*focal))
+
+
+def distCUDA2(points):
+    points_np = points.detach().cpu().float().numpy()
+    dists, inds = KDTree(points_np).query(points_np, k=4)
+    meanDists = (dists[:, 1:] ** 2).mean(1)
+    return torch.tensor(meanDists, dtype=points.dtype, device=points.device)
