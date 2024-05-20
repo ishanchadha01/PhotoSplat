@@ -14,13 +14,10 @@ data_dir: "data/ct1a_given_poses"
 
 max_sh_degree: 3
 
-gaussian_init_method: "photometric"
+gaussian_init_method: "random"
 percent_dense: .01
 
-opacity_thresh_coarse_low: .005
-
-opacity_thresh_fine_low_start: .005
-opacity_thresh_fine_low_end: .005
+opacity_thresh_low: .005
 
 position_lr_init: 0.00016
 position_lr_final: 0.0000016
@@ -38,3 +35,11 @@ feature_lr: 0.0025
 opacity_lr: 0.05
 scaling_lr: 0.005
 rotation_lr: 0.001
+
+densification_interval: 100
+densify_after_iter: 500
+densify_until_iter: 15_000
+densify_grad_threshold: 0.0002
+
+pruning_interval: 100
+pruning_after_iter: 500

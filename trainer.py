@@ -70,6 +70,7 @@ class Trainer:
         
         for iter in tqdm(range(num_iters)):
             pass
+            # TODO
             # run iter of model
             # differentiable rasterization
             # color and depth loss

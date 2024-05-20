@@ -35,7 +35,7 @@ class PhotoSplatter(torch.nn):
         self.initialize_gaussians()
 
         # optimization params
-        self.opacity_thresh_coarse_low = args.opacity_thresh_coarse_low # for pruning
+        self.opacity_thresh_low = args.opacity_thresh_low # for pruning
         self.percent_dense = args.percent_dense # if scaling of gaussian is greater than this, then split
         # otherwise clone, for densification
 
@@ -65,27 +65,34 @@ class PhotoSplatter(torch.nn):
         self.spatial_lr_scale = args.spatial_lr_scale
 
 
-    def init_pts_photometric(self, img):
-        #TODO
-        pass
-
-
     def initialize_gaussians(self, method, img=None):
         if self.init_method == 'colmap':
             pts = None
-            # use pycolmap to extract features, perform exhaustive matching, and then get sparse pts as [N,3]
+            # TODO: use pycolmap to extract features, perform exhaustive matching, and then get sparse pts as [N,3]
         elif self.init_method == 'photometric':
             if img is None:
                 raise Exception("Must pass in first image if using photometric Gaussian initialization")
-            pts = self.init_pts_photometric(img)
+            pts = self._init_pts_photometric(img)
             # TODO: init gaussians based off of photometric approach
+        elif self.init_method == 'random':
+            pts = self._init_pts_random() # for testing purposes probably
         else:
             raise Exception("No Gaussian initialization method provided in config file")
 
         self.init_from_pt_cloud(pts)
 
     
-    def init_from_pt_cloud(self, pt_cloud : PointCloud):
+    def _init_pts_photometric(self, img):
+        #TODO
+        pass
+
+    
+    def _init_pts_random(self):
+        # initialize 1000 pts in 0 to 1 scale
+        return np.random(1000,3)
+
+    
+    def _init_from_pt_cloud(self, pt_cloud : PointCloud):
         fused_point_cloud = pt_cloud.points.float().cuda()
         fused_color = convert_rgb2sh(pt_cloud.colors.float().cuda())
         features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda() # [N,3,sh_slots]
