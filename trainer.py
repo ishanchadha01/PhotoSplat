@@ -14,17 +14,18 @@ from utils.misc import Timer
 class Trainer:
     def __init__(self, args):
         # extract relevant args
-        self.coarse_iters = args['coarse_iters']
-        self.fine_iters = args['fine_iters']
-        image_height = args['image_height']
-        image_width = args['image_width']
+        self.coarse_iters = args['training']['coarse_iters']
+        self.fine_iters = args['training']['fine_iters']
         images_dir = os.path.join(args['data_dir'], 'images')
         poses_bounds = np.load(os.path.join(args['data_dir'], 'poses_bounds.npy'))
         image_paths = [os.path.join(images_dir, fp) for fp in sorted(os.listdir(images_dir))]
+        example_img = cv2.imread(image_paths[0])
+        image_height = example_img.shape[0]
+        image_width = example_img.shape[1]
 
         # Load images
         print("Loading images...")
-        images = np.zeros((len(image_paths), image_height, image_width))
+        images = np.zeros((len(image_paths), *(example_img.shape)))
         for idx, img_path in tqdm(enumerate(image_paths)):
             images[idx] = cv2.imread(img_path)
 
@@ -34,15 +35,15 @@ class Trainer:
         print("Loading masks...")
         masks = np.zeros((len(mask_paths), image_height, image_width))
         for idx, mask_path in tqdm(enumerate(mask_paths)):
-            masks[idx] = cv2.imread(mask_path)
+            masks[idx] = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
 
         # Get depths
-        depths_dir = os.path.join(args['data_dir'], 'depths')
+        depths_dir = os.path.join(args['data_dir'], 'depth')
         depth_paths = [os.path.join(depths_dir, fp) for fp in sorted(os.listdir(depths_dir))]
         print("Loading depths...")
         depths = np.zeros((len(depth_paths), image_height, image_width))
         for idx, depth_path in tqdm(enumerate(depth_paths)):
-            depths[idx] = cv2.imread(depth_path)
+            depths[idx] = cv2.imread(depth_path, cv2.IMREAD_GRAYSCALE)
 
         # Create relevant data structures
         self.dataset = GSDataset(images, poses_bounds, masks, depths, image_paths)

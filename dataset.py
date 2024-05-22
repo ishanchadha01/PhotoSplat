@@ -65,7 +65,7 @@ class GSDataset(Dataset):
 
             ###TODO: need to check and incorporate this
             self.world_view_transform = torch.tensor(get_world2view(R, t)).transpose(0, 1)
-            self.projection_matrix = getProjectionMatrix(znear=znear, zfar=zfar, fovX=xfov, fovY=self.yfov).transpose(0,1)
+            self.projection_matrix = getProjectionMatrix(znear=znear, zfar=zfar, fovX=xfov, fovY=yfov).transpose(0,1)
             self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
             self.camera_center = self.world_view_transform.inverse()[3, :3]
 

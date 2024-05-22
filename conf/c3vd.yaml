@@ -1,5 +1,6 @@
 quiet: False
 detect_anomaly: True
+seed: 0
 
 model:
 
@@ -10,7 +11,7 @@ training:
   fine_iters: 2000
 
 
-data_dir: "data/ct1a_given_poses"
+data_dir: "ct1a/"
 
 sh_degree: 3
 

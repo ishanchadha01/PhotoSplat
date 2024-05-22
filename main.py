@@ -16,8 +16,8 @@ def main():
 
     torch.cuda.empty_cache()
     parser = ArgumentParser(description="Training script parameters")
-    parser.add_argument("--expname", type=str, default = "")
-    parser.add_argument("--config", type=str, default = "")
+    parser.add_argument("--expname", type=str, default = "test")
+    parser.add_argument("--config", type=str, default = "conf/c3vd.yaml")
 
     # get args with config as dict
     args = parser.parse_args()
@@ -33,8 +33,8 @@ def main():
     # Create output and log
     args['model_path'] = os.path.join("./output/", args['expname'])
     os.makedirs(args['model_path'], exist_ok = True)
-    with open(os.path.join(args.model_path, "cfg_args"), 'w') as cfg_log_f:
-        cfg_log_f.write(str(Namespace(**vars(args))))
+    with open(os.path.join(args['model_path'], "cfg_args"), 'w') as cfg_log_f:
+        cfg_log_f.write(str(Namespace(**args)))
 
     # Find depths
     #TODO
@@ -43,3 +43,5 @@ def main():
     trainer = Trainer(args)
     trainer.train()
     trainer.test()
+
+main()

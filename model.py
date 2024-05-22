@@ -15,12 +15,12 @@ class PhotoSplatter(torch.nn.Module):
         super().__init__()
         
         # photometric calibration
-        self.y = args.gamma
-        self.g = args.gain
-        self.k = args.cosine_decay
+        self.y = args['gamma']
+        self.g = args['gain']
+        self.k = args['cosine_decay']
 
         # data structures initialization
-        self.init_method = args.gaussian_init_method
+        self.init_method = args['gaussian_init_method']
         self._means = torch.empty(0) # points [N,3]
         self._rotations = torch.empty(0) # rot for each point [N,3]
         self._scalings = torch.empty(0) # scale for each point [N,3]
@@ -31,12 +31,12 @@ class PhotoSplatter(torch.nn.Module):
         self.means_gradient_accum = torch.empty(0) # [N] gradient accumulation for means 
         # to check if grad is high enough for densification
         self.denom = torch.empty(0) # [N] keeps track of number of points considered during densification
-        self.sh_degree = args.sh_degree
+        self.sh_degree = args['sh_degree']
         self.initialize_gaussians()
 
         # optimization params
-        self.opacity_thresh_low = args.opacity_thresh_low # for pruning
-        self.percent_dense = args.percent_dense # if scaling of gaussian is greater than this, then split
+        self.opacity_thresh_low = args['opacity_thresh_low'] # for pruning
+        self.percent_dense = args['percent_dense'] # if scaling of gaussian is greater than this, then split
         # otherwise clone, for densification
 
         # delta net and deformation params
@@ -45,24 +45,24 @@ class PhotoSplatter(torch.nn.Module):
         self._deform_accum = torch.empty(0) # [N,3], how much each point has been cumulatively deformed over all iters
 
         # training params
-        self.position_lr_init = args.position_lr_init
-        self.position_lr_final = args.position_lr_final
-        self.position_lr_delay_mult = args.position_lr_delay_mult
-        self.position_lr_max_steps = args.position_lr_max_steps
+        self.position_lr_init = args['position_lr_init']
+        self.position_lr_final = args['position_lr_final']
+        self.position_lr_delay_mult = args['position_lr_delay_mult']
+        self.position_lr_max_steps = args['position_lr_max_steps']
 
-        self.deformation_lr_init = args.deformation_lr_init
-        self.deformation_lr_final = args.deformation_lr_final
-        self.deformation_lr_delay_mult = args.deformation_lr_delay_mult
+        self.deformation_lr_init = args['deformation_lr_init']
+        self.deformation_lr_final = args['deformation_lr_final']
+        self.deformation_lr_delay_mult = args['deformation_lr_delay_mult']
 
-        self.grid_lr_init = args.grid_lr_init
-        self.grid_lr_final = args.grid_lr_final
+        self.grid_lr_init = args['grid_lr_init']
+        self.grid_lr_final = args['grid_lr_final']
 
-        self.feature_lr = args.feature_lr
-        self.opacity_lr = args.opacity_lr
-        self.scaling_lr = args.scaling_lr
-        self.rotation_lr = args.rotation_lr
+        self.feature_lr = args['feature_lr']
+        self.opacity_lr = args['opacity_lr']
+        self.scaling_lr = args['scaling_lr']
+        self.rotation_lr = args['rotation_lr']
 
-        self.spatial_lr_scale = args.spatial_lr_scale
+        self.spatial_lr_scale = args['spatial_lr_scale']
 
 
     def initialize_gaussians(self, img=None):
@@ -211,12 +211,12 @@ class PhotoSplatter(torch.nn.Module):
             tanfovy=tanfovy,
             bg=bg_color,
             scale_modifier=1.0,
-            viewmatrix=viewpoint_camera.world_view_transform.cuda(),
-            projmatrix=viewpoint_camera.full_proj_transform.cuda(),
-            sh_degree=pc.active_sh_degree,
-            campos=viewpoint_camera.camera_center.cuda(),
+            viewmatrix=camera.world_view_transform.cuda(),
+            projmatrix=camera.full_proj_transform.cuda(),
+            sh_degree=self.means.active_sh_degree,
+            campos=camera.camera_center.cuda(),
             prefiltered=False,
-            debug=pipe.debug
+            debug=pipe.debug # pip params ??
         )
 
         rasterizer = GaussianRasterizer(raster_settings=raster_settings)

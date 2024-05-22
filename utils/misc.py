@@ -1,6 +1,6 @@
 import random
 import sys
-import datetime
+from datetime import datetime
 import time
 from typing import NamedTuple
 import math
@@ -76,7 +76,7 @@ def create_stdout_state(silent):
     random.seed(0)
     np.random.seed(0)
     torch.manual_seed(0)
-    torch.cuda.set_device(torch.device("cuda:0"))
+    # torch.cuda.set_device(torch.device("cuda:0")) TODO: uncomment for cuda impl
 
 
 def get_world2view(R, t, translate=np.array([.0, .0, .0]), scale=1.0):
