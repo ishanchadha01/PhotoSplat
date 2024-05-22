@@ -6,7 +6,7 @@ from torch.utils.data import Dataset
 import cv2
 import numpy as np
 
-from utils.misc import get_focal2fov, get_world2view
+from utils.misc import get_focal2fov, get_world2view, get_proj_matrix
 
 
 class Camera(NamedTuple):
@@ -24,6 +24,8 @@ class Camera(NamedTuple):
     zfar : float
     xfov : float
     yfov : float
+    full_proj_transform: np.array
+    camera_center: np.array
 
 
 class GSDataset(Dataset):
@@ -50,7 +52,7 @@ class GSDataset(Dataset):
             # t = -R.T @ c2w[:3,3] # w2c translation
             # lets just use w2c fully
             R = c2w[:3,:3].T
-            t = -R @ c2w[:3,:3] # transpose of R has already been taken
+            t = -R @ c2w[:3,3] # transpose of R has already been taken
 
             # get mask and depths
             mask = self.masks[idx]
@@ -64,15 +66,19 @@ class GSDataset(Dataset):
             time = idx / len(self.images)
 
             ###TODO: need to check and incorporate this
-            self.world_view_transform = torch.tensor(get_world2view(R, t)).transpose(0, 1)
-            self.projection_matrix = getProjectionMatrix(znear=znear, zfar=zfar, fovX=xfov, fovY=yfov).transpose(0,1)
-            self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
-            self.camera_center = self.world_view_transform.inverse()[3, :3]
+            # self.world_view_transform = torch.tensor(get_world2view(R, t)).transpose(0, 1)
+            world_view_transform = np.zeros((4,4))
+            world_view_transform[:3,:3] = R
+            world_view_transform[:3, 3] = t
+            proj_mat = get_proj_matrix(znear=znear, zfar=zfar, fovX=xfov, fovY=yfov).transpose(0,1) # transposing makes it row-wise
+            full_proj_transform = (world_view_transform.unsqueeze(0).bmm(proj_mat.unsqueeze(0))).squeeze(0)
+            camera_center = world_view_transform.inverse()[3, :3]
 
             ###
 
             cam = Camera(R=R, t=t, img=img, depths=depths, img_path=img_path, time=time, 
-                         mask=mask, znear=znear, zfar=zfar, xfov=xfov, yfov=yfov)
+                         mask=mask, znear=znear, zfar=zfar, xfov=xfov, yfov=yfov, 
+                         full_proj_transform=full_proj_transform, camera_center=camera_center)
             self.cameras.append(cam)
 
 

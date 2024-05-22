@@ -76,7 +76,7 @@ def create_stdout_state(silent):
     random.seed(0)
     np.random.seed(0)
     torch.manual_seed(0)
-    # torch.cuda.set_device(torch.device("cuda:0")) TODO: uncomment for cuda impl
+    torch.cuda.set_device(torch.device("cuda:0"))
 
 
 def get_world2view(R, t, translate=np.array([.0, .0, .0]), scale=1.0):
@@ -93,6 +93,28 @@ def get_world2view(R, t, translate=np.array([.0, .0, .0]), scale=1.0):
 
     Rt[3,3] = 1.0
     return np.float32(Rt)
+
+def get_proj_matrix(znear, zfar, fovX, fovY):
+    tanHalfFovY = math.tan((fovY / 2))
+    tanHalfFovX = math.tan((fovX / 2))
+
+    top = tanHalfFovY * znear
+    bottom = -top
+    right = tanHalfFovX * znear
+    left = -right
+
+    P = torch.zeros(4, 4)
+
+    z_sign = 1.0
+
+    P[0, 0] = 2.0 * znear / (right - left)
+    P[1, 1] = 2.0 * znear / (top - bottom)
+    P[0, 2] = (right + left) / (right - left)
+    P[1, 2] = (top + bottom) / (top - bottom)
+    P[3, 2] = z_sign
+    P[2, 2] = z_sign * zfar / (zfar - znear)
+    P[2, 3] = -(zfar * znear) / (zfar - znear)
+    return P
 
 
 def inverse_sigmoid(x):
