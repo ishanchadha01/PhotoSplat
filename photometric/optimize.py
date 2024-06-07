@@ -5,7 +5,7 @@ import cv2
 from utils import get_calibration, unproject_camera_model, get_intensity,\
       calibrated_photometric_endoscope_model, cost_function, regularization_function
 
-def compute_img_depths(img, iters=1000):
+def compute_img_depths(img, k, g_t, gamma, iters=1000):
     """
     x_l: light center
     x_i: point on surface
@@ -14,9 +14,6 @@ def compute_img_depths(img, iters=1000):
 
     # set color img to 0-1 intensity range
     img = 1/255 * img
-
-    # get calibration info
-    k, g_t, gamma = get_calibration(img)
 
     # initialize energy and gradient
     energy_function = np.zeros((img.shape[0], img.shape[1]))

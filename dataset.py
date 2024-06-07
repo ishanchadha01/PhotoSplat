@@ -24,8 +24,8 @@ class Camera(NamedTuple):
     zfar : float
     xfov : float
     yfov : float
-    full_proj_transform: np.array
-    camera_center: np.array
+    full_proj_transform: torch.Tensor
+    camera_center: torch.Tensor
 
 
 class GSDataset(Dataset):
@@ -67,12 +67,13 @@ class GSDataset(Dataset):
 
             ###TODO: need to check and incorporate this
             # self.world_view_transform = torch.tensor(get_world2view(R, t)).transpose(0, 1)
-            world_view_transform = np.zeros((4,4))
-            world_view_transform[:3,:3] = R
-            world_view_transform[:3, 3] = t
+            world_view_transform = torch.zeros((4,4))
+            world_view_transform[:3,:3] = torch.from_numpy(R)
+            world_view_transform[:3, 3] = torch.from_numpy(t)
             proj_mat = get_proj_matrix(znear=znear, zfar=zfar, fovX=xfov, fovY=yfov).transpose(0,1) # transposing makes it row-wise
             full_proj_transform = (world_view_transform.unsqueeze(0).bmm(proj_mat.unsqueeze(0))).squeeze(0)
-            camera_center = world_view_transform.inverse()[3, :3]
+            # camera_center = world_view_transform.inverse()[3, :3]
+            camera_center = torch.from_numpy(t)
 
             ###
 

@@ -47,8 +47,7 @@ class Trainer:
 
         # Create relevant data structures
         self.dataset = GSDataset(images, poses_bounds, masks, depths, image_paths)
-        pt_cloud = self.dataset.create_pt_cloud()
-        self.model = PhotoSplatter(args, pt_cloud)
+        self.model = PhotoSplatter(args)
         self.timer = Timer()
         
 

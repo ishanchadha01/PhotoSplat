@@ -44,3 +44,9 @@ densify_grad_threshold: 0.0002
 
 pruning_interval: 100
 pruning_after_iter: 500
+
+
+
+cosine_decay: 2.2
+gain: 2.0
+gamma: 2.0

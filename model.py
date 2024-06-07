@@ -66,20 +66,26 @@ class PhotoSplatter(torch.nn.Module):
 
 
     def initialize_gaussians(self, img=None):
+        ## TODO: set all colors to red for now?
         if self.init_method == 'colmap':
             pts = None
             # TODO: use pycolmap to extract features, perform exhaustive matching, and then get sparse pts as [N,3]
         elif self.init_method == 'photometric':
             if img is None:
                 raise Exception("Must pass in first image if using photometric Gaussian initialization")
-            pts = self._init_pts_photometric(img)
+            pts = self._init_pts_photometric(img, self.k, self.y, self.g)
             # TODO: init gaussians based off of photometric approach
         elif self.init_method == 'random':
             pts = self._init_pts_random() # for testing purposes probably
         else:
             raise Exception("No Gaussian initialization method provided in config file")
 
-        self.init_from_pt_cloud(pts)
+        colors = torch.zeros((*pts.shape, 3)) + torch.tensor([255,0,0])
+        normals = torch.tensor([0,0,1]).repeat(*pts.shape, 1)
+
+        pt_cloud = PointCloud(pts=pts, colors=colors, normals=normals)
+
+        self._init_from_pt_cloud(pt_cloud)
 
     
     def _init_pts_photometric(self, img):
@@ -89,11 +95,11 @@ class PhotoSplatter(torch.nn.Module):
     
     def _init_pts_random(self):
         # initialize 1000 pts in 0 to 1 scale
-        return np.random(1000,3)
+        return np.random.rand(1000,3)
 
     
     def _init_from_pt_cloud(self, pt_cloud : PointCloud):
-        fused_point_cloud = pt_cloud.points.float().cuda()
+        fused_point_cloud = pt_cloud.pts.float().cuda()
         fused_color = convert_rgb2sh(pt_cloud.colors.float().cuda())
         features = torch.zeros((fused_color.shape[0], 3, (self.sh_degree + 1) ** 2)).float().cuda() # [N,3,sh_slots]
         features[:, :3, 0 ] = fused_color # only color used for first sh slot, before using rgb2sh, [N,3,1]
@@ -101,7 +107,7 @@ class PhotoSplatter(torch.nn.Module):
 
         print("Number of points at initialization : ", fused_point_cloud.shape[0])
 
-         # put pts in kmeans data structure, mean of distance to closest 3 pts for each pt
+         # put pts in kmeans data structure, mean of distance to closest 3 pts for each  pt
         dist2 = torch.clamp_min(distCUDA2(pt_cloud.pts.float().cuda()), 0.0000001)
 
         # gets sqrt for scale, isotropic covariance
