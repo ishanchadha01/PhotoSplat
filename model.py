@@ -3,8 +3,10 @@ import numpy as np
 import pycolmap
 
 import math
-from utils.misc import PointCloud, inverse_sigmoid, get_expon_lr_func, distCUDA2
-from utils.sh_utils import convert_rgb2sh
+from utils.misc import PointCloud, inverse_sigmoid, get_expon_lr_func, distCUDA2, strip_symmetric, build_scaling_rotation
+from utils.sh_utils import convert_rgb2sh, eval_sh
+
+from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 
 
 class PhotoSplatter(torch.nn.Module):
@@ -33,6 +35,22 @@ class PhotoSplatter(torch.nn.Module):
         self.denom = torch.empty(0) # [N] keeps track of number of points considered during densification
         self.sh_degree = args['sh_degree']
         self.initialize_gaussians()
+
+        # build covariance matrix dynamically when needed
+        def build_covariance_from_scaling_rotation(scaling, rotation): #TODO leaving out scaling modifier for now
+            # taking in scale and quaternion and create scaled rotation of size Nx6 since only upper triangle is needed
+            L = build_scaling_rotation(scaling, rotation)
+            actual_covariance = L @ L.transpose(1, 2)
+            symm = strip_symmetric(actual_covariance)
+            return symm
+        self.covariance = build_covariance_from_scaling_rotation
+
+        # activation functions
+        self.scaling_activation = torch.exp
+        self.scaling_inverse_activation = torch.log
+        self.opacity_activation = torch.sigmoid
+        self.inverse_opacity_activation = inverse_sigmoid
+        self.rotation_activation = torch.nn.functional.normalize
 
         # optimization params
         self.opacity_thresh_low = args['opacity_thresh_low'] # for pruning
@@ -126,9 +144,9 @@ class PhotoSplatter(torch.nn.Module):
         self.deform_net = self._deltas.to('cuda') 
         self._feats_color = torch.nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._feats_rest = torch.nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
-        self._scaling = torch.nn.Parameter(scales.requires_grad_(True))
-        self._rotation = torch.nn.Parameter(rots.requires_grad_(True))
-        self._opacity = torch.nn.Parameter(opacities.requires_grad_(True))
+        self._scalings = torch.nn.Parameter(scales.requires_grad_(True))
+        self._rotations = torch.nn.Parameter(rots.requires_grad_(True))
+        self._opacities = torch.nn.Parameter(opacities.requires_grad_(True))
         self._max_radii2D = torch.zeros((num_pts), device='cuda') #TODO: update to be num gaussians? max 2d radii for splatted nax radius
         self._deform_mask = torch.gt(torch.ones((num_pts),device='cuda'),0)
 
@@ -175,7 +193,7 @@ class PhotoSplatter(torch.nn.Module):
             if self.opacities[idx] < self.opacity_thresh_coarse_low or self.check_size(idx):
                 self.remove_gaussian(idx)
             
-            # perform densification
+            # perform densification TODO
                 # check for over reconstruction
 
                 # under reconstruction
@@ -204,9 +222,7 @@ class PhotoSplatter(torch.nn.Module):
                 param_group['lr'] = lr
 
     def render(self, camera, bg_color, is_fine, args):
-        screenspace_points = torch.zeros_like(self._means, dtype=self._means.dtype, requires_grad=True, device="cuda")
-        screenspace_points.retain_grad()
-
+    
         # Set up rasterization configuration
         tanfovx = math.tan(camera.xfov * 0.5)
         tanfovy = math.tan(camera.yfov * 0.5)
@@ -222,11 +238,103 @@ class PhotoSplatter(torch.nn.Module):
             sh_degree=self.means.active_sh_degree,
             campos=camera.camera_center.cuda(),
             prefiltered=False,
-            debug=pipe.debug # pip params ??
+            debug=pipe.debug # pipe params ?? TODO
+        )
+        rasterizer = GaussianRasterizer(raster_settings=raster_settings)
+        
+        # create local vars
+        screenspace_points = torch.zeros_like(self._means, dtype=self._means.dtype, requires_grad=True, device="cuda")
+        screenspace_points.retain_grad()
+        means_3d = self._means
+        means_2d = screenspace_points
+        opacities = self._opacities
+
+        # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
+        # scaling / rotation by the rasterizer.
+        scales = None
+        rotations = None
+        cov3d_precomp = None
+
+        if pipe.compute_cov3D_python:
+            cov3D_precomp = self.covariance(self._scalings, self._rotations) #TODO: where do i setup activatoins
+        else:
+            scales = self._scalings
+            rotations = self.rotations
+        deformed_pts_mask = self._deform_table #TODO this hasnt been created yet, what is this
+
+        # create empty time array
+        time = torch.tensor(camera.time).to(means_3d.device).repeat(means_3d.shape[0],1)
+
+        # only deform during fine iterations
+        if not is_fine:
+            means3D_deform, scales_deform, rotations_deform, opacity_deform = means_3d, scales, rotations, opacities
+        else:
+            means3D_deform, scales_deform, rotations_deform, opacity_deform = self._deformation(means_3d[deformed_pts_mask], scales[deformed_pts_mask], 
+                                                                            rotations[deformed_pts_mask], opacities[deformed_pts_mask],
+                                                                            time[deformed_pts_mask])
+
+        # dont perform gradient when accumulating deformation in deform accum tracker for each gaussian
+        # TODO: this is just a note, i think deform table tracks deformation for this iter and deform accum is overall deformation of gaussian for finding world coord? no but then i wouldnt take absolute value
+        with torch.no_grad():
+            self._deform_accum[deformed_pts_mask] += torch.abs(means3D_deform - means_3d[deformed_pts_mask])
+
+        means3d_final = torch.zeros_like(means_3d)
+        rotations_final = torch.zeros_like(rotations)
+        scales_final = torch.zeros_like(scales)
+        opacities_final = torch.zeros_like(opacities)
+
+        # set deformed pts
+        means3d_final[deformed_pts_mask] =  means3D_deform
+        rotations_final[deformed_pts_mask] =  rotations_deform
+        scales_final[deformed_pts_mask] =  scales_deform
+        opacities_final[deformed_pts_mask] = opacity_deform
+
+        # set undeformed pts
+        means3d_final[~deformed_pts_mask] = means_3d[~deformed_pts_mask]
+        rotations_final[~deformed_pts_mask] = rotations[~deformed_pts_mask]
+        scales_final[~deformed_pts_mask] = scales[~deformed_pts_mask]
+        opacities_final[~deformed_pts_mask] = opacities[~deformed_pts_mask]
+
+        # perform activations on remaining fields
+        scales_final = self.scaling_activation(scales_final)
+        rotations_final =self.rotation_activation(rotations_final)
+        opacities = self.opacity_activation(opacities)
+
+
+        # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
+        # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
+        shs = None
+        colors_precomp = None
+        # TODO assuming that we never override color
+        if pipe.convert_SHs_python: #TODO set this in passed in args
+                shs_view = self._feats_color.transpose(1, 2).view(-1, 3, (self.max_sh_degree+1)**2) #TODO why is this transposing? could be a source of error
+                dir_pp = (self._means - camera.camera_center.cuda().repeat(self._feats_color.shape[0], 1))
+                dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
+                sh2rgb = eval_sh(self.active_sh_degree, shs_view, dir_pp_normalized) #TODO need to write this in utils
+                colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
+        else:
+            shs = self._feats_color
+
+        # render and return
+        # Rasterize visible Gaussians to image, obtain their radii (on screen). 
+        rendered_image, radii, depth = rasterizer(
+            means3D = means3d_final,
+            means2D = means_2d,
+            shs = shs,
+            colors_precomp = colors_precomp,
+            opacities = opacities,
+            scales = scales_final,
+            rotations = rotations_final,
+            cov3D_precomp = cov3D_precomp
         )
 
-        rasterizer = GaussianRasterizer(raster_settings=raster_settings)
-
+        # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
+        # They will be excluded from value updates used in the splitting criteria.
+        return {"render": rendered_image,
+                "depth": depth,
+                "viewspace_points": screenspace_points,
+                "visibility_filter" : radii > 0, # cull gaussians
+                "radii": radii,}
 
     
 

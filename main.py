@@ -37,11 +37,14 @@ def main():
         cfg_log_f.write(str(Namespace(**args)))
 
     # Find depths
-    #TODO
+    # TODO
 
     # Create trainer and train
+    # TODO finish trainer
     trainer = Trainer(args)
+    # TODO finish training
     trainer.train()
+    # TODO finish testing
     trainer.test()
 
 main()
