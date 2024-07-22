@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import pycolmap
 
+from deformation import DeformNet
 from utils.misc import PointCloud, inverse_sigmoid, get_expon_lr_func, distCUDA2, strip_symmetric, build_scaling_rotation
 from utils.sh_utils import convert_rgb2sh, eval_sh
 
@@ -10,14 +11,13 @@ from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianR
 import math
 
 
-class PhotoSplatter(torch.nn.Module):
+class PhotoSplatter():
     """
     Gaussian splatting model with call to deformation network.
     """
 
     def __init__(self, args):
-        super().__init__()
-        
+
         # photometric calibration
         self.y = args['gamma']
         self.g = args['gain']
@@ -183,11 +183,6 @@ class PhotoSplatter(torch.nn.Module):
                                                     lr_delay_mult=self.deformation_lr_delay_mult,
                                                     max_steps=self.position_lr_max_steps)   
 
-
-    
-    def forward(self, x):
-        pass
-        
     
     def optimize(self):
         for idx in range(self.num_gaussians):
@@ -200,6 +195,7 @@ class PhotoSplatter(torch.nn.Module):
 
                 # under reconstruction
 
+
     def remove_gaussian(self, idx):
         '''
         Remove Gaussian at idx and fill hole in list with end value
@@ -209,6 +205,7 @@ class PhotoSplatter(torch.nn.Module):
         self._rotations[idx] = self.rotations.pop()
         self._scalings[idx] = self.scalings.pop()
         self._opacities[idx] = self.opacities.pop()
+
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
@@ -223,7 +220,8 @@ class PhotoSplatter(torch.nn.Module):
                 lr = self.deformation_scheduler_args(iteration)
                 param_group['lr'] = lr
 
-    def render(self, camera, bg_color, is_fine, args):
+
+    def render(self, camera, bg_color, is_fine, compute_cov3D_python, convert_SHs_python, debug):
     
         # Set up rasterization configuration
         tanfovx = math.tan(camera.xfov * 0.5)
@@ -240,7 +238,7 @@ class PhotoSplatter(torch.nn.Module):
             sh_degree=self.means.active_sh_degree,
             campos=camera.camera_center.cuda(),
             prefiltered=False,
-            debug=pipe.debug # pipe params ?? TODO
+            debug=debug
         )
         rasterizer = GaussianRasterizer(raster_settings=raster_settings)
         
@@ -257,12 +255,12 @@ class PhotoSplatter(torch.nn.Module):
         rotations = None
         cov3d_precomp = None
 
-        if pipe.compute_cov3D_python:
-            cov3D_precomp = self.covariance(self._scalings, self._rotations) #TODO: where do i setup activatoins
+        if compute_cov3D_python:
+            cov3D_precomp = self.covariance(self._scalings, self._rotations)
         else:
             scales = self._scalings
             rotations = self.rotations
-        deformed_pts_mask = self._deform_table #TODO this hasnt been created yet, what is this
+        deformed_pts_mask = self._deform_mask
 
         # create empty time array
         time = torch.tensor(camera.time).to(means_3d.device).repeat(means_3d.shape[0],1)
@@ -271,12 +269,11 @@ class PhotoSplatter(torch.nn.Module):
         if not is_fine:
             means3D_deform, scales_deform, rotations_deform, opacity_deform = means_3d, scales, rotations, opacities
         else:
-            means3D_deform, scales_deform, rotations_deform, opacity_deform = self._deformation(means_3d[deformed_pts_mask], scales[deformed_pts_mask], 
+            means3D_deform, scales_deform, rotations_deform, opacity_deform = self._deform_net(means_3d[deformed_pts_mask], scales[deformed_pts_mask], 
                                                                             rotations[deformed_pts_mask], opacities[deformed_pts_mask],
                                                                             time[deformed_pts_mask])
 
         # dont perform gradient when accumulating deformation in deform accum tracker for each gaussian
-        # TODO: this is just a note, i think deform table tracks deformation for this iter and deform accum is overall deformation of gaussian for finding world coord? no but then i wouldnt take absolute value
         with torch.no_grad():
             self._deform_accum[deformed_pts_mask] += torch.abs(means3D_deform - means_3d[deformed_pts_mask])
 
@@ -308,12 +305,12 @@ class PhotoSplatter(torch.nn.Module):
         shs = None
         colors_precomp = None
         # TODO assuming that we never override color
-        if pipe.convert_SHs_python: #TODO set this in passed in args
-                shs_view = self._feats_color.transpose(1, 2).view(-1, 3, (self.max_sh_degree+1)**2) #TODO why is this transposing? could be a source of error
-                dir_pp = (self._means - camera.camera_center.cuda().repeat(self._feats_color.shape[0], 1))
-                dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
-                sh2rgb = eval_sh(self.active_sh_degree, shs_view, dir_pp_normalized) #TODO need to write this in utils
-                colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
+        if convert_SHs_python:
+            shs_view = self._feats_color.transpose(1, 2).view(-1, 3, (self.max_sh_degree+1)**2) #TODO why is this transposing? could be a source of error
+            dir_pp = (self._means - camera.camera_center.cuda().repeat(self._feats_color.shape[0], 1))
+            dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
+            sh2rgb = eval_sh(self.active_sh_degree, shs_view, dir_pp_normalized) #TODO need to write this in utils
+            colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
         else:
             shs = self._feats_color
 
@@ -338,3 +335,90 @@ class PhotoSplatter(torch.nn.Module):
                 "visibility_filter" : radii > 0, # cull gaussians
                 "radii": radii,}
 
+
+    def optimize(self, loss, psnr, iter, pbar, num_iters, timer, args, visibility_filter, radii, stage):
+
+        with torch.no_grad():
+            # Progress bar
+            ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
+            ema_psnr_for_log = 0.4 * psnr + 0.6 * ema_psnr_for_log
+            num_pts = self._means.shape[0]
+            if iter % 10 == 0:
+                pbar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}",
+                                          "psnr": f"{psnr:.{2}f}",
+                                          "point":f"{num_pts}"})
+                pbar.update(10)
+            if iter == num_iters:
+                pbar.close()
+
+            # Log and save
+            timer.pause()
+            #TODO: logging
+            # training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, [pipe, background], stage)
+            # if (iter in saving_iterations):
+            #     print("\n[ITER {}] Saving Gaussians".format(iteration))
+            #     scene.save(iteration, stage)
+            # if dataset.render_process:
+            #     if (iteration < 1000 and iteration % 10 == 1) \
+            #         or (iteration < 3000 and iteration % 50 == 1) \
+            #             or (iteration < 10000 and iteration %  100 == 1) \
+            #                 or (iteration < 60000 and iteration % 100 ==1):
+            #         render_training_image(scene, gaussians, video_cams, render, pipe, background, stage, iteration-1,timer.get_elapsed_time())
+            timer.start()
+            
+            # Densification
+            if iter < args.densify_until_iter :
+                # Keep track of max radii in image-space for pruning
+                self._max_radii2D[visibility_filter] = torch.max(self._max_radii2D[visibility_filter], radii[visibility_filter])
+                # TODO gaussians.add_densification_stats(viewspace_point_tensor_grad, visibility_filter)
+
+                #TODO: make sure that these params are named right
+                if stage == "coarse":
+                    opacity_threshold = self.args.opacity_threshold_coarse
+                    densify_threshold = self.args.densify_grad_threshold_coarse
+                else:
+                    opacity_threshold = self.args.opacity_threshold_fine_init - self.args*(self.args.opacity_threshold_fine_init - self.args.opacity_threshold_fine_after)/(self.args.densify_until_iter)  
+                    densify_threshold = self.args.densify_grad_threshold_fine_init - iter*(self.args.densify_grad_threshold_fine_init - self.args.densify_grad_threshold_after)/(self.args.densify_until_iter)  
+
+                if iter > self.args.densify_from_iter and iter % self.args.densification_interval == 0:
+                    size_threshold = 20 if iter > self.args.opacity_reset_interval else None
+                    self.densify(densify_threshold, opacity_threshold, scene.cameras_extent, size_threshold) #TODO
+                    
+                if iter > self.args.pruning_from_iter and iter % self.args.pruning_interval == 0:
+                    size_threshold = 40 if iter > self.args.opacity_reset_interval else None
+                    self.prune(densify_threshold, opacity_threshold, scene.cameras_extent, size_threshold)
+                    
+                if iter % self.args.opacity_reset_interval == 0 or (dataset.white_background and iter == self.args.densify_from_iter): #TODO get white bg arg
+                    print("reset opacity")
+                    self.reset_opacity() #TODO
+                    
+            # Optimizer step
+            if iter < num_iters:
+                self.optimizer.step()
+                self.optimizer.zero_grad(set_to_none = True)
+
+            # if (iter in checkpoint_iterations): TODO logging
+            #     print("\n[ITER {}] Saving Checkpoint".format(iteration))
+            #     torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+    
+    #TODO move this to dataset initialization for camera extent computation to be used in optimize method
+    # def getNerfppNorm(cam_info):
+    #     def get_center_and_diag(cam_centers):
+    #         cam_centers = np.hstack(cam_centers)
+    #         avg_cam_center = np.mean(cam_centers, axis=1, keepdims=True)
+    #         center = avg_cam_center
+    #         dist = np.linalg.norm(cam_centers - center, axis=0, keepdims=True)
+    #         diagonal = np.max(dist)
+    #         return center.flatten(), diagonal
+
+    #     cam_centers = []
+    #     for cam in cam_info:
+    #         W2C = getWorld2View2(cam.R, cam.T)
+    #         C2W = np.linalg.inv(W2C)
+    #         cam_centers.append(C2W[:3, 3:4])
+
+    #     center, diagonal = get_center_and_diag(cam_centers)
+    #     radius = diagonal * 1.1
+    #     translate = -center
+
+    #     return {"translate": translate, "radius": radius}

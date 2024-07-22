@@ -23,6 +23,11 @@ class Trainer:
         image_height = example_img.shape[0]
         image_width = example_img.shape[1]
 
+        # extract args for render func
+        self.compute_cov3D_python = args.compute_cov3D_python
+        self.convert_SHs_python = args.convert_SHs_python
+        self.debug = args.debug
+
         # Load images
         print("Loading images...")
         images = np.zeros((len(image_paths), *(example_img.shape)))
@@ -69,29 +74,95 @@ class Trainer:
         # train model
         bg_color = torch.tensor([1,1,1], dtype=torch.float32, device="cuda")
         for iter in tqdm(range(num_iters)):
-            pass
-            # TODO
+            iter_start.record()
             self.model.update_learning_rate(iter)
             if is_fine:
                 start_idx = np.random() * (len(self.dataset) - 1) # start at random point in sequence if fine iters
             else:
                 start_idx = 0
 
+            images = []
+            depths = []
+            gt_images = []
+            gt_depths = []
+            masks = []
+            radii_list = []
+            visibility_filter_list = []
+            viewspace_point_tensor_list = []
             for camera_idx in range(start_idx, len(self.dataset)):
                 camera = self.dataset[camera_idx]
-                render_dict = self.model.render(camera, bg_color, is_fine, args) #TODO: pass in specific args depending on whats required
+                render_dict = self.model.render(
+                    camera,
+                    bg_color,
+                    is_fine, 
+                    self.compute_cov3D_python, 
+                    self.convert_SHs_python, 
+                    self.debug
+                )
+                rendered_image = render_dict["render"]
+                rendered_depth = render_dict["depth"]
+                viewspace_point_tensor = render_dict["viewspace_points"]
+                visibility_filter = render_dict["visibility_filter"]
+                radii = render_dict["radii"]
+                gt_image = camera.img.cuda().float()
+                gt_depth = camera.depth_map.cuda().float()
+                mask = camera.mask.cuda()
 
+                images.append(rendered_image.unsqueeze(0))
+                depths.append(rendered_depth.unsqueeze(0))
+                gt_images.append(gt_image.unsqueeze(0))
+                gt_depths.append(gt_depth.unsqueeze(0))
+                masks.append(mask.unsqueeze(0))
+                viewspace_point_tensor_list.append(viewspace_point_tensor)
+                radii_list.append(radii)
+                visibility_filter_list.append(visibility_filter)
             
+            radii = torch.cat(radii_list,0).max(dim=0).values
+            visibility_filter = torch.cat(visibility_filter_list).any(dim=0)
+            rendered_images = torch.cat(images,0)
+            rendered_depths = torch.cat(depths, 0)
+            gt_images = torch.cat(gt_images,0)
+            gt_depths = torch.cat(gt_depths, 0)
+            masks = torch.cat(masks, 0)
 
+            # Loss computation
+            l1_loss = compute_l1_loss(rendered_images, gt_images, masks) #TODO
+            if (gt_depths!=0).sum() < 10:
+                print("No depth loss")
+                depth_loss = torch.tensor(0.).cuda()
+            else:
+                #TODO this has previously caused problems
+                rendered_depths_reshape = rendered_depths.reshape(-1, 1)
+                gt_depths_reshape = gt_depths.reshape(-1, 1)
+                mask_tmp = mask.reshape(-1)
+                rendered_depths_reshape, gt_depths_reshape = rendered_depths_reshape[mask_tmp!=0, :], gt_depths_reshape[mask_tmp!=0, :]
+                depth_loss =  0.001 * (1 - pearson_corrcoef(gt_depths_reshape, rendered_depths_reshape)) #TODO
 
-            # for pose in poses traversed thus far (need to make sure poses are passed in with dataset)
-                # call render using current gaussian estimate
+            depth_tvloss = TV_loss(rendered_depths)
+            img_tvloss = TV_loss(rendered_images)
+            tv_loss = 0.03 * (img_tvloss + depth_tvloss)
+            loss = l1_loss + depth_loss + tv_loss
+            psnr = compute_psnr(rendered_images, gt_images, masks).mean().double()
+
+            #TODO separate self args out in init of trainer
+            if stage == "fine" and self.args.time_smoothness_weight != 0: 
+                tv_loss = self.model.compute_regulation(2e-2, 2e-2, 2e-2)
+                loss += tv_loss
+            if self.args.lambda_dssim != 0:
+                ssim_loss = compute_ssim(rendered_images,gt_images) #TODO
+                loss += self.args.lambda_dssim * (1.0-ssim_loss)
+            if self.args.lambda_lpips !=0:
+                lpipsloss = compute_lpips_loss(rendered_images,gt_images,lpips_model) #TODO lpips loss as well as lpips model
+                loss += self.args.lambda_lpips * lpipsloss
             
-            # update params like lr and sh degree
-
-            # differentiable rasterization (TODO when does this happen? and when does deformation happen)
-            # color and depth loss
-            # perform densification and pruning
+            loss.backward()
+            viewspace_point_tensor_grad = torch.zeros_like(viewspace_point_tensor)
+            for idx in range(0, len(viewspace_point_tensor_list)):
+                viewspace_point_tensor_grad = viewspace_point_tensor_grad + viewspace_point_tensor_list[idx].grad
+            iter_end.record()
+            
+            # TODO: perform densification and pruning
+            self.model.optimize()
         
             self.timer.pause()
             # log

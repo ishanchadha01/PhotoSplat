@@ -16,7 +16,7 @@ class Camera(NamedTuple):
     R: np.array
     t: np.array
     img: np.array
-    depths: np.array
+    depth_map: np.array
     img_path : str
     time : float
     mask : np.array
@@ -77,7 +77,7 @@ class GSDataset(Dataset):
 
             ###
 
-            cam = Camera(R=R, t=t, img=img, depths=depths, img_path=img_path, time=time, 
+            cam = Camera(R=R, t=t, img=img, depth_map=depths, img_path=img_path, time=time, 
                          mask=mask, znear=znear, zfar=zfar, xfov=xfov, yfov=yfov, 
                          full_proj_transform=full_proj_transform, camera_center=camera_center)
             self.cameras.append(cam)
