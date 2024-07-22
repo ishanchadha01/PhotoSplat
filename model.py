@@ -2,15 +2,17 @@ import torch
 import numpy as np
 import pycolmap
 
-import math
 from utils.misc import PointCloud, inverse_sigmoid, get_expon_lr_func, distCUDA2, strip_symmetric, build_scaling_rotation
 from utils.sh_utils import convert_rgb2sh, eval_sh
 
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 
+import math
+
 
 class PhotoSplatter(torch.nn.Module):
     """
+    Gaussian splatting model with call to deformation network.
     """
 
     def __init__(self, args):
@@ -336,13 +338,3 @@ class PhotoSplatter(torch.nn.Module):
                 "visibility_filter" : radii > 0, # cull gaussians
                 "radii": radii,}
 
-    
-
-class DeformNet(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-        # create multires spatial delta feature planes
-    
-        # create single res temporal delta planes
-    
-        # create photometric delta planes

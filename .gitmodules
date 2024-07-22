@@ -7,3 +7,6 @@
 [submodule "submodules/Depth-Anything"]
 	path = submodules/Depth-Anything
 	url = https://github.com/LiheYoung/Depth-Anything.git
+[submodule "submodules/tiny-cuda-nn"]
+	path = submodules/tiny-cuda-nn
+	url = https://github.com/NVlabs/tiny-cuda-nn.git

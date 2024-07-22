@@ -67,7 +67,7 @@ class Trainer:
         self.timer.start()
 
         # train model
-        bg_color = torch.tensor([1,1,1], dtype=torch.float32, device="cuda") #TODO: can we do this without cuda
+        bg_color = torch.tensor([1,1,1], dtype=torch.float32, device="cuda")
         for iter in tqdm(range(num_iters)):
             pass
             # TODO

@@ -223,3 +223,20 @@ def build_scaling_rotation(s, r):
     # scale rotation by multiplying it by scaling matrix
     L = R @ L
     return L
+
+
+def normalize_aabb(pts, aabb):
+    """
+    Normalize axis-aligned bounding box around current pts
+    """
+    return (pts - aabb[0]) * (2.0 / (aabb[1] - aabb[0])) - 1.0
+
+
+def initialize_weights(m):
+    """
+    Initialize network weights.
+    """
+    if isinstance(m, torch.nn.Linear):
+        torch.nn.init.xavier_uniform_(m.weight,gain=1)
+        if m.bias is not None:
+            torch.nn.init.xavier_uniform_(m.weight,gain=1)
