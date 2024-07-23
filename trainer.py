@@ -136,16 +136,16 @@ class Trainer:
                 gt_depths_reshape = gt_depths.reshape(-1, 1)
                 mask_tmp = mask.reshape(-1)
                 rendered_depths_reshape, gt_depths_reshape = rendered_depths_reshape[mask_tmp!=0, :], gt_depths_reshape[mask_tmp!=0, :]
-                depth_loss =  0.001 * (1 - pearson_corrcoef(gt_depths_reshape, rendered_depths_reshape)) #TODO
+                depth_loss =  0.001 * (1 - compute_pearson_corr_coef(gt_depths_reshape, rendered_depths_reshape)) #TODO
 
-            depth_tvloss = TV_loss(rendered_depths)
-            img_tvloss = TV_loss(rendered_images)
+            depth_tvloss = compute_TV_loss(rendered_depths)
+            img_tvloss = compute_TV_loss(rendered_images)
             tv_loss = 0.03 * (img_tvloss + depth_tvloss)
             loss = l1_loss + depth_loss + tv_loss
             psnr = compute_psnr(rendered_images, gt_images, masks).mean().double()
 
             #TODO separate self args out in init of trainer
-            if stage == "fine" and self.args.time_smoothness_weight != 0: 
+            if is_fine and self.args.time_smoothness_weight != 0: 
                 tv_loss = self.model.compute_regulation(2e-2, 2e-2, 2e-2)
                 loss += tv_loss
             if self.args.lambda_dssim != 0:

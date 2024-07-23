@@ -82,6 +82,32 @@ class GSDataset(Dataset):
                          full_proj_transform=full_proj_transform, camera_center=camera_center)
             self.cameras.append(cam)
 
+        # set camera extent
+        self.get_nerfplusplus_norm()
+
+    def get_nerfplusplus_norm(self):
+        """
+        Get size of scene using Nerf++ method.
+        """
+        def get_center_and_diag(cam_centers):
+            cam_centers = np.hstack(cam_centers)
+            avg_cam_center = np.mean(cam_centers, axis=1, keepdims=True)
+            center = avg_cam_center
+            dist = np.linalg.norm(cam_centers - center, axis=0, keepdims=True)
+            diagonal = np.max(dist)
+            return center.flatten(), diagonal
+
+        cam_centers = []
+        for cam in self.cameras:
+            W2C = get_world2view(cam.R, cam.T)
+            C2W = np.linalg.inv(W2C)
+            cam_centers.append(C2W[:3, 3:4])
+
+        center, diagonal = get_center_and_diag(cam_centers)
+        radius = diagonal * 1.1 # want it slightly larger than min and max
+        translate = -center
+
+        self.camera_extent = {"translate": translate, "radius": radius}
 
     def __getitem__(self, idx):
         """
