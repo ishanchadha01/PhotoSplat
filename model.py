@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-import pycolmap
+# import pycolmap
 
 from deformation import DeformNet
 from utils.misc import PointCloud, inverse_sigmoid, get_expon_lr_func, distCUDA2, strip_symmetric, build_scaling_rotation, convert_quat2rot

@@ -1,6 +1,6 @@
 import torch
-import torch.nn.funtional as F
-import tinycudann as tcnn
+import torch.nn.functional as F
+# import tinycudann as tcnn
 
 from typing import Sequence, Collection, Iterable, Optional
 import itertools
