@@ -39,8 +39,8 @@ rotation_lr: 0.001
 
 densification_interval: 100
 densify_after_iter: 500
-densify_until_iter: 15_000
-densify_grad_threshold: 0.0002
+optimize_until_iter: 15_000
+densify_grad_thresh: 0.0002
 
 pruning_interval: 100
 pruning_after_iter: 500
@@ -57,3 +57,18 @@ debug: True
 time_smoothness_weight: 0.0 # set higher to compute TV loss
 lambda_ssim: 0.0 # set higher for ssim loss
 lambda_lpips: 0.0 # set higher for lpips loss
+
+# args for deform net
+time_base_pos_enc: 4
+timenet_width: 64
+timenet_out: 32
+bounds: 1.6
+multires: [1,2,4,8]
+
+deform_depth: 1
+deform_width: 64
+scale_rotation_pos_enc: 2
+opacity_pos_enc: 2
+pos_base_pos_enc: 10
+
+fully_fused: False

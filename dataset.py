@@ -25,6 +25,7 @@ class Camera(NamedTuple):
     xfov : float
     yfov : float
     full_proj_transform: torch.Tensor
+    world_view_transform: torch.Tensor
     camera_center: torch.Tensor
 
 
@@ -38,7 +39,7 @@ class GSDataset(Dataset):
         self.bounds = poses_bounds[:, -2:]
         self.masks = masks
         self.depths = depths
-        self.image_paths = images
+        self.image_paths = image_paths
 
         # Populate cameras
         self.cameras = []
@@ -66,7 +67,7 @@ class GSDataset(Dataset):
             time = idx / len(self.images)
 
             ###TODO: need to check and incorporate this
-            # self.world_view_transform = torch.tensor(get_world2view(R, t)).transpose(0, 1)
+            world_view_transform = torch.tensor(get_world2view(R, t)).transpose(0, 1)
             world_view_transform = torch.zeros((4,4))
             world_view_transform[:3,:3] = torch.from_numpy(R)
             world_view_transform[:3, 3] = torch.from_numpy(t)
@@ -79,7 +80,8 @@ class GSDataset(Dataset):
 
             cam = Camera(R=R, t=t, img=img, depth_map=depths, img_path=img_path, time=time, 
                          mask=mask, znear=znear, zfar=zfar, xfov=xfov, yfov=yfov, 
-                         full_proj_transform=full_proj_transform, camera_center=camera_center)
+                         full_proj_transform=full_proj_transform, world_view_transform=world_view_transform, 
+                         camera_center=camera_center)
             self.cameras.append(cam)
 
         # set camera extent

@@ -17,23 +17,28 @@ class DeformNet(torch.nn.Module):
         super().__init__()
 
         # initialize the timenet
-        time_in = 2*args.time_base_pos_enc
-        time_width = args.timenet_width
-        time_out = args.timenet_out
+        time_in = 2*args["time_base_pos_enc"]
+        time_width = args["timenet_width"]
+        time_out = args["timenet_out"]
         self.timenet = torch.nn.Sequential(
             torch.nn.Linear(time_in, time_width), torch.nn.ReLU(),
             torch.nn.Linear(time_width, time_out))
         
         # initialize hex plane field
-        aabb = torch.tensor([[args.bounds, args.bounds, args.bounds],
-                             [-args.bounds, -args.bounds, -args.bounds]])
+        aabb = torch.tensor([[args["bounds"], args["bounds"], args["bounds"]],
+                             [-args["bounds"], -args["bounds"], -args["bounds"]]])
         self.aabb = torch.nn.Parameter(aabb, requires_grad=False)
-        self.grid_config =  [args.planeconfig]
-        self.multiscale_res_multipliers = args.multires
+        self.grid_config =  [{ #TODO put this in config
+                                'grid_dimensions': 2,
+                                'input_coordinate_dim': 4,
+                                'output_coordinate_dim': 32,
+                                'resolution': [64, 64, 64, 25]
+                                }]
+        self.multiscale_res_multipliers = args["multires"]
         self.concat_features = True
 
         self.grids = torch.nn.ModuleList()
-        self.feat_dim = 0
+        self.grids_feat_dim = 0
         for res in self.multiscale_res_multipliers:
 
             # initialize coordinate grid
@@ -50,28 +55,27 @@ class DeformNet(torch.nn.Module):
 
             # Concatenate over feature len for each scale
             if self.concat_features: # shape[1] is out-dim 
-                self.feat_dim += gp[-1].shape[1]
+                self.grids_feat_dim += gp[-1].shape[1]
             else:
-                self.feat_dim = gp[-1].shape[1]
+                self.grids_feat_dim = gp[-1].shape[1]
             self.grids.append(gp)
 
         # initialize the deformation net
-        self.D = args.deform_depth
-        self.W = args.deform_width
-        self.input_ch = (4+3)+((4+3)*args.scale_rotation_pos_enc)*2
-        self.input_ch_time = args.timenet_output
-        self.skips = args.skips
+        self.D = args["deform_depth"]
+        self.W = args["deform_width"]
+        self.input_ch = (4+3)+((4+3)*args["scale_rotation_pos_enc"])*2
+        self.input_ch_time = args["timenet_out"]
 
-        if not args.fully_fused:
+        if not args["fully_fused"]:
             self.pos_deform, self.scales_deform, self.rotations_deform, self.opacity_deform = self.create_net()
         else:
             self.pos_deform, self.scales_deform, self.rotations_deform, self.opacity_deform = self.create_fully_fused_net()
 
         # initialize buffers        
-        self.register_buffer('time_base_pos_enc', torch.FloatTensor([(2**i) for i in range(args.time_ase_pos_enc)]))
-        self.register_buffer('pos_base_enc', torch.FloatTensor([(2**i) for i in range(args.pos_base_pos_enc)]))
-        self.register_buffer('rotation_scaling_pos_enc', torch.FloatTensor([(2**i) for i in range(args.scale_rotation_pos_env)]))
-        self.register_buffer('opacity_pos_enc', torch.FloatTensor([(2**i) for i in range(args.opacity_pos_enc)]))
+        self.register_buffer('time_base_pos_enc', torch.FloatTensor([(2**i) for i in range(args["time_base_pos_enc"])]))
+        self.register_buffer('pos_base_enc', torch.FloatTensor([(2**i) for i in range(args["scale_rotation_pos_enc"])]))
+        self.register_buffer('rotation_scaling_pos_enc', torch.FloatTensor([(2**i) for i in range(args["pos_base_pos_enc"])]))
+        self.register_buffer('opacity_pos_enc', torch.FloatTensor([(2**i) for i in range(args["opacity_pos_enc"])]))
         self.apply(initialize_weights)
 
     def forward(self, ray_pts_embedding, scale_embedding, rotation_embedding, opacity_embedding, time_embedding):
@@ -114,7 +118,7 @@ class DeformNet(torch.nn.Module):
 
     def create_net(self):
         mlp_out_dim = 0
-        self.feature_out = [torch.nn.Linear(mlp_out_dim + self.grid.feat_dim ,self.W)]
+        self.feature_out = [torch.nn.Linear(mlp_out_dim + self.grids_feat_dim ,self.W)]
         for i in range(self.D-1):
             self.feature_out.append(torch.nn.ReLU())
             self.feature_out.append(torch.nn.Linear(self.W,self.W))
@@ -150,7 +154,7 @@ class DeformNet(torch.nn.Module):
     def create_fully_fused_net(self):
         #TODO get rid of repeated code between this and self.create_net()
         mlp_out_dim = 0
-        self.feature_out = [torch.nn.Linear(mlp_out_dim + self.grid.feat_dim ,self.W)]
+        self.feature_out = [torch.nn.Linear(mlp_out_dim + self.grids_feat_dim ,self.W)]
         for i in range(self.D-1):
             self.feature_out.append(torch.nn.ReLU())
             self.feature_out.append(torch.nn.Linear(self.W,self.W))
@@ -225,7 +229,9 @@ class DeformNet(torch.nn.Module):
 
         return grid_coefs
 
-    def interpolate_multires_features(pts: torch.Tensor,
+    def interpolate_multires_features(
+                            self,
+                            pts: torch.Tensor,
                             multires_grids: Collection[Iterable[torch.nn.Module]],
                             grid_dimensions: int,
                             concat_features: bool,
@@ -294,6 +300,15 @@ class DeformNet(torch.nn.Module):
         interp = interp.squeeze()  # [B?, n, feature_dim?]
         return interp
 
+    def get_mlp_parameters(self):
+        parameter_list = []
+        for name, param in self.named_parameters():
+            if  "grid" not in name:
+                parameter_list.append(param)
+        return parameter_list
+    
+    def get_grid_parameters(self):
+        return list(self.grids.parameters()) 
 
 
 class HashHexPlaneField(torch.nn.Module):

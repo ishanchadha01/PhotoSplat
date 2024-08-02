@@ -36,7 +36,6 @@ class PhotoSplatter():
         # to check if grad is high enough for densification
         self.denom = torch.empty(0) # [N] keeps track of number of points considered during densification
         self.sh_degree = args['sh_degree']
-        self.initialize_gaussians()
 
         # build covariance matrix dynamically when needed
         def build_covariance_from_scaling_rotation(scaling, rotation): #TODO leaving out scaling modifier for now
@@ -56,7 +55,6 @@ class PhotoSplatter():
 
         # optimization params
         self.opacity_thresh_low = args['opacity_thresh_low'] # for pruning
-        self.size_thresh = args['size_thresh'] # if scaling of gaussian is greater than this, then split
         self.percent_dense = args['percent_dense'] # maximum proportion of scene occupied by gaussians
         # otherwise clone, for densification
         self.density_grad_thresh = args['densify_grad_thresh']
@@ -64,7 +62,7 @@ class PhotoSplatter():
 
         # delta net and deformation params
         self._deform_mask = torch.empty(0) # [N] binary mask for points which have been deformed
-        self.deform_net = DeformNet()
+        self._deform_net = DeformNet(args)
         self._deform_accum = torch.empty(0) # [N,3], how much each point has been cumulatively deformed over all iters
 
         # training params
@@ -85,7 +83,9 @@ class PhotoSplatter():
         self.scaling_lr = args['scaling_lr']
         self.rotation_lr = args['rotation_lr']
 
-        self.spatial_lr_scale = args['spatial_lr_scale']
+        self.spatial_lr_scale = 0
+
+        self.initialize_gaussians()
 
 
     def initialize_gaussians(self, img=None):
@@ -103,7 +103,7 @@ class PhotoSplatter():
         else:
             raise Exception("No Gaussian initialization method provided in config file")
 
-        colors = torch.zeros((*pts.shape, 3)) + torch.tensor([255,0,0])
+        colors = torch.zeros(pts.shape) + torch.tensor([255,0,0])
         normals = torch.tensor([0,0,1]).repeat(*pts.shape, 1)
 
         pt_cloud = PointCloud(pts=pts, colors=colors, normals=normals)
@@ -131,7 +131,7 @@ class PhotoSplatter():
         print("Number of points at initialization : ", fused_point_cloud.shape[0])
 
          # put pts in kmeans data structure, mean of distance to closest 3 pts for each  pt
-        dist2 = torch.clamp_min(distCUDA2(pt_cloud.pts.float().cuda()), 0.0000001)
+        dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(pt_cloud.pts).to(torch.float32).cuda()), 0.0000001)
 
         # gets sqrt for scale, isotropic covariance
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
@@ -146,7 +146,7 @@ class PhotoSplatter():
         # data structures init
         num_pts = self._means.shape[0]
         self._means = torch.nn.Parameter(fused_point_cloud.requires_grad_(True))
-        self.deform_net = self._deltas.to('cuda') 
+        self.deform_net = self._deform_net.to('cuda') 
         self._feats_color = torch.nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._feats_rest = torch.nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
         self._scalings = torch.nn.Parameter(scales.requires_grad_(True))
@@ -162,8 +162,8 @@ class PhotoSplatter():
 
         training_params = [
             {'params': [self._means], 'lr': self.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
-            {'params': list(self.deform_net.get_mlp_parameters()), 'lr': self.deformation_lr_init * self.spatial_lr_scale, "name": "deformation"},
-            {'params': list(self.deform_net.get_grid_parameters()), 'lr': self.grid_lr_init * self.spatial_lr_scale, "name": "grid"},
+            {'params': list(self._deform_net.get_mlp_parameters()), 'lr': self.deformation_lr_init * self.spatial_lr_scale, "name": "deformation"},
+            {'params': list(self._deform_net.get_grid_parameters()), 'lr': self.grid_lr_init * self.spatial_lr_scale, "name": "grid"},
             {'params': [self._feats_color], 'lr': self.feature_lr, "name": "f_color"},
             {'params': [self._feats_rest], 'lr': self.feature_lr / 20.0, "name": "f_rest"},
             {'params': [self._opacities], 'lr': self.opacity_lr, "name": "opacity"},
@@ -219,15 +219,15 @@ class PhotoSplatter():
         tanfovx = math.tan(camera.xfov * 0.5)
         tanfovy = math.tan(camera.yfov * 0.5)
         raster_settings = GaussianRasterizationSettings(
-            image_height=int(camera.image.shape[0]),
-            image_width=int(camera.image.shape[1]),
+            image_height=int(camera.img.shape[0]),
+            image_width=int(camera.img.shape[1]),
             tanfovx=tanfovx,
             tanfovy=tanfovy,
             bg=bg_color,
             scale_modifier=1.0,
             viewmatrix=camera.world_view_transform.cuda(),
             projmatrix=camera.full_proj_transform.cuda(),
-            sh_degree=self.means.active_sh_degree,
+            sh_degree=self.sh_degree,
             campos=camera.camera_center.cuda(),
             prefiltered=False,
             debug=debug
@@ -298,10 +298,10 @@ class PhotoSplatter():
         colors_precomp = None
         # TODO assuming that we never override color
         if convert_SHs_python:
-            shs_view = self._feats_color.transpose(1, 2).view(-1, 3, (self.max_sh_degree+1)**2) #TODO why is this transposing? could be a source of error
+            shs_view = self._feats_color.transpose(1, 2).view(-1, 3, (self.sh_degree+1)**2) #TODO why is this transposing? could be a source of error
             dir_pp = (self._means - camera.camera_center.cuda().repeat(self._feats_color.shape[0], 1))
             dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
-            sh2rgb = eval_sh(self.active_sh_degree, shs_view, dir_pp_normalized) #TODO need to write this in utils
+            sh2rgb = eval_sh(self.sh_degree, shs_view, dir_pp_normalized) #TODO need to write this in utils
             colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
         else:
             shs = self._feats_color
@@ -371,7 +371,7 @@ class PhotoSplatter():
 
             # Densify
             if iter > self.args.densify_from_iter and iter % self.args.densify_interval == 0 and iter < self.densify_until_iter:
-                size_threshold = 20 if iter > self.args.opacity_reset_interval else None
+                size_threshold = 20 if iter > self.args.opacity_reset_interval else None #TODO size thresh would be better as a parameter
                 self.densify(densify_thresh, camera_extent) #TODO
                 
             # Prune
