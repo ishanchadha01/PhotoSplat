@@ -144,8 +144,8 @@ class PhotoSplatter():
         opacities = inverse_sigmoid(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
 
         # data structures init
-        num_pts = self._means.shape[0]
         self._means = torch.nn.Parameter(fused_point_cloud.requires_grad_(True))
+        num_pts = self._means.shape[0]
         self.deform_net = self._deform_net.to('cuda') 
         self._feats_color = torch.nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._feats_rest = torch.nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
@@ -193,10 +193,10 @@ class PhotoSplatter():
         Method used for debugging, in practice pruned points are masked out.
         '''
         self.denom -= 1
-        self._means[idx] = self.means.pop()
-        self._rotations[idx] = self.rotations.pop()
-        self._scalings[idx] = self.scalings.pop()
-        self._opacities[idx] = self.opacities.pop()
+        self._means[idx] = self._means.pop()
+        self._rotations[idx] = self._rotations.pop()
+        self._scalings[idx] = self._scalings.pop()
+        self._opacities[idx] = self._opacities.pop()
 
 
     def update_learning_rate(self, iteration):
@@ -248,10 +248,10 @@ class PhotoSplatter():
         cov3d_precomp = None
 
         if compute_cov3D_python:
-            cov3D_precomp = self.covariance(self._scalings, self._rotations)
+            cov3d_precomp = self.covariance(self._scalings, self._rotations)
         else:
             scales = self._scalings
-            rotations = self.rotations
+            rotations = self._rotations
         deformed_pts_mask = self._deform_mask
 
         # create empty time array
@@ -270,26 +270,33 @@ class PhotoSplatter():
             self._deform_accum[deformed_pts_mask] += torch.abs(means3D_deform - means_3d[deformed_pts_mask])
 
         means3d_final = torch.zeros_like(means_3d)
-        rotations_final = torch.zeros_like(rotations)
-        scales_final = torch.zeros_like(scales)
         opacities_final = torch.zeros_like(opacities)
+        if rotations is not None and scales is not None:
+            rotations_final = torch.zeros_like(rotations)
+            scales_final = torch.zeros_like(scales)
 
         # set deformed pts
         means3d_final[deformed_pts_mask] =  means3D_deform
-        rotations_final[deformed_pts_mask] =  rotations_deform
-        scales_final[deformed_pts_mask] =  scales_deform
         opacities_final[deformed_pts_mask] = opacity_deform
+        if rotations is not None and scales is not None:
+            rotations_final[deformed_pts_mask] =  rotations_deform
+            scales_final[deformed_pts_mask] =  scales_deform
 
         # set undeformed pts
         means3d_final[~deformed_pts_mask] = means_3d[~deformed_pts_mask]
-        rotations_final[~deformed_pts_mask] = rotations[~deformed_pts_mask]
-        scales_final[~deformed_pts_mask] = scales[~deformed_pts_mask]
         opacities_final[~deformed_pts_mask] = opacities[~deformed_pts_mask]
+        if rotations is not None and scales is not None:
+            rotations_final[~deformed_pts_mask] = rotations[~deformed_pts_mask]
+            scales_final[~deformed_pts_mask] = scales[~deformed_pts_mask]
 
         # perform activations on remaining fields
-        scales_final = self.scaling_activation(scales_final)
-        rotations_final =self.rotation_activation(rotations_final)
         opacities = self.opacity_activation(opacities)
+        if rotations is not None and scales is not None:
+            scales_final = self.scaling_activation(scales_final)
+            rotations_final =self.rotation_activation(rotations_final)
+        else:
+            rotations_final = None
+            scales_final = None
 
 
         # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
@@ -298,7 +305,7 @@ class PhotoSplatter():
         colors_precomp = None
         # TODO assuming that we never override color
         if convert_SHs_python:
-            shs_view = self._feats_color.transpose(1, 2).view(-1, 3, (self.sh_degree+1)**2) #TODO why is this transposing? could be a source of error
+            shs_view = self._feats_color.transpose(1, 2).repeat(1,1,(self.sh_degree+1)**2) #TODO is repeating 16 times the best way to do this? could be source of error
             dir_pp = (self._means - camera.camera_center.cuda().repeat(self._feats_color.shape[0], 1))
             dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
             sh2rgb = eval_sh(self.sh_degree, shs_view, dir_pp_normalized) #TODO need to write this in utils
@@ -316,7 +323,7 @@ class PhotoSplatter():
             opacities = opacities,
             scales = scales_final,
             rotations = rotations_final,
-            cov3D_precomp = cov3D_precomp
+            cov3D_precomp = cov3d_precomp
         )
 
         # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
