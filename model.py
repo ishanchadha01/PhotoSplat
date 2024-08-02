@@ -122,7 +122,7 @@ class PhotoSplatter():
 
     
     def _init_from_pt_cloud(self, pt_cloud : PointCloud):
-        fused_point_cloud = pt_cloud.pts.float().cuda()
+        fused_point_cloud = torch.from_numpy(pt_cloud.pts).to(torch.float).cuda()
         fused_color = convert_rgb2sh(pt_cloud.colors.float().cuda())
         features = torch.zeros((fused_color.shape[0], 3, (self.sh_degree + 1) ** 2)).float().cuda() # [N,3,sh_slots]
         features[:, :3, 0 ] = fused_color # only color used for first sh slot, before using rgb2sh, [N,3,1]

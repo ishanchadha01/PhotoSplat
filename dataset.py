@@ -99,7 +99,7 @@ class GSDataset(Dataset):
 
         cam_centers = []
         for cam in self.cameras:
-            W2C = get_world2view(cam.R, cam.T)
+            W2C = get_world2view(cam.R, cam.t)
             C2W = np.linalg.inv(W2C)
             cam_centers.append(C2W[:3, 3:4])
 

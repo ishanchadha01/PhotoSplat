@@ -50,3 +50,10 @@ pruning_after_iter: 500
 cosine_decay: 2.2
 gain: 2.0
 gamma: 2.0
+
+compute_cov3D_python: True
+convert_SHs_python: True
+debug: True
+time_smoothness_weight: 0.0 # set higher to compute TV loss
+lambda_ssim: 0.0 # set higher for ssim loss
+lambda_lpips: 0.0 # set higher for lpips loss

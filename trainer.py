@@ -5,10 +5,13 @@ from typing import NamedTuple
 import torch
 import numpy as np
 import cv2
+import lpips
+from torchmetrics.regression import PearsonCorrCoef
 
 from model import PhotoSplatter
 from dataset import GSDataset
 from utils.misc import Timer
+from utils.loss_utils import compute_l1_loss, compute_lpips_loss, compute_ssim, compute_TV_loss, compute_psnr
 
 
 class Trainer:
@@ -24,9 +27,9 @@ class Trainer:
         image_width = example_img.shape[1]
 
         # extract args for render func
-        self.compute_cov3D_python = args.compute_cov3D_python
-        self.convert_SHs_python = args.convert_SHs_python
-        self.debug = args.debug
+        self.compute_cov3D_python = args["compute_cov3D_python"]
+        self.convert_SHs_python = args["convert_SHs_python"]
+        self.debug = args["debug"]
 
         # Load images
         print("Loading images...")
@@ -136,24 +139,26 @@ class Trainer:
                 gt_depths_reshape = gt_depths.reshape(-1, 1)
                 mask_tmp = mask.reshape(-1)
                 rendered_depths_reshape, gt_depths_reshape = rendered_depths_reshape[mask_tmp!=0, :], gt_depths_reshape[mask_tmp!=0, :]
-                depth_loss =  0.001 * (1 - compute_pearson_corr_coef(gt_depths_reshape, rendered_depths_reshape)) #TODO
+                depth_loss =  0.001 * (1 - PearsonCorrCoef(gt_depths_reshape, rendered_depths_reshape)) #TODO
 
             depth_tvloss = compute_TV_loss(rendered_depths)
             img_tvloss = compute_TV_loss(rendered_images)
             tv_loss = 0.03 * (img_tvloss + depth_tvloss)
             loss = l1_loss + depth_loss + tv_loss
             psnr = compute_psnr(rendered_images, gt_images, masks).mean().double()
+            print(f"PSNR at iter {iter}: {psnr}")
 
             #TODO separate self args out in init of trainer
-            if is_fine and self.args.time_smoothness_weight != 0: 
+            if is_fine and self.args["time_smoothness_weight"] != 0: 
                 tv_loss = self.model.compute_regulation(2e-2, 2e-2, 2e-2)
                 loss += tv_loss
-            if self.args.lambda_dssim != 0:
+            if self.args["lambda_dssim"] != 0:
                 ssim_loss = compute_ssim(rendered_images,gt_images) #TODO
-                loss += self.args.lambda_dssim * (1.0-ssim_loss)
+                loss += self.args["lambda_ssim"] * (1.0-ssim_loss)
             if self.args.lambda_lpips !=0:
-                lpipsloss = compute_lpips_loss(rendered_images,gt_images,lpips_model) #TODO lpips loss as well as lpips model
-                loss += self.args.lambda_lpips * lpipsloss
+                lpips_model = lpips.LPIPS(net="vgg").cuda()
+                lpipsloss = compute_lpips_loss(rendered_images, gt_images, lpips_model) #TODO lpips loss as well as lpips model
+                loss += self.args["lambda_lpips"] * lpipsloss
             
             loss.backward()
             viewspace_point_tensor_grad = torch.zeros_like(viewspace_point_tensor)
