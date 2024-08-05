@@ -240,3 +240,10 @@ def initialize_weights(m):
         torch.nn.init.xavier_uniform_(m.weight,gain=1)
         if m.bias is not None:
             torch.nn.init.xavier_uniform_(m.weight,gain=1)
+
+
+def print_gpu_memory_usage():
+    allocated = torch.cuda.memory_allocated()
+    reserved = torch.cuda.memory_reserved()
+    print(f"Memory Allocated: {allocated / 1e6:.2f} MB")
+    print(f"Memory Reserved: {reserved / 1e6:.2f} MB")

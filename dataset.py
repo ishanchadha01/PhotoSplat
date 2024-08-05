@@ -5,6 +5,7 @@ import torch
 from torch.utils.data import Dataset
 import cv2
 import numpy as np
+import gc
 
 from utils.misc import get_focal2fov, get_world2view, get_proj_matrix
 
@@ -57,7 +58,7 @@ class GSDataset(Dataset):
 
             # get mask and depths
             mask = self.masks[idx]
-            depths = self.depths[idx]
+            depth = self.depths[idx]
 
             # get other info
             xfov = get_focal2fov(self.f, self.w)
@@ -78,11 +79,15 @@ class GSDataset(Dataset):
 
             ###
 
-            cam = Camera(R=R, t=t, img=img, depth_map=depths, img_path=img_path, time=time, 
+            cam = Camera(R=R, t=t, img=img, depth_map=depth, img_path=img_path, time=time, 
                          mask=mask, znear=znear, zfar=zfar, xfov=xfov, yfov=yfov, 
                          full_proj_transform=full_proj_transform, world_view_transform=world_view_transform, 
                          camera_center=camera_center)
             self.cameras.append(cam)
+
+            del mask, depth, img
+            torch.cuda.empty_cache()
+            gc.collect()
 
         # set camera extent
         self.get_nerfplusplus_norm()

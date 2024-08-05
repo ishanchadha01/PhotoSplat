@@ -103,7 +103,7 @@ class PhotoSplatter():
         else:
             raise Exception("No Gaussian initialization method provided in config file")
 
-        colors = torch.zeros(pts.shape) + torch.tensor([255,0,0])
+        colors = (torch.zeros(pts.shape) + torch.tensor([1.0,0,0])).to(torch.float32)
         normals = torch.tensor([0,0,1]).repeat(*pts.shape, 1)
 
         pt_cloud = PointCloud(pts=pts, colors=colors, normals=normals)

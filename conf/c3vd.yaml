@@ -72,3 +72,9 @@ opacity_pos_enc: 2
 pos_base_pos_enc: 10
 
 fully_fused: False
+
+
+
+lambda_dssim: 0.0
+lambda_lpips: 0.0
+time_smoothness_weight: 0.1

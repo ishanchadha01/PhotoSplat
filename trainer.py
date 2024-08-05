@@ -1,17 +1,20 @@
 from tqdm import tqdm
 import os
 from typing import NamedTuple
+from random import randint
 
 import torch
 import numpy as np
 import cv2
 import lpips
 from torchmetrics.regression import PearsonCorrCoef
+import gc
 
 from model import PhotoSplatter
 from dataset import GSDataset
-from utils.misc import Timer
+from utils.misc import Timer, print_gpu_memory_usage
 from utils.loss_utils import compute_l1_loss, compute_lpips_loss, compute_ssim, compute_TV_loss, compute_psnr
+
 
 
 class Trainer:
@@ -58,6 +61,10 @@ class Trainer:
         self.model = PhotoSplatter(args)
         self.timer = Timer()
         
+        # Other hyperparams
+        self.lambda_dssim = args['lambda_dssim']
+        self.time_smoothness_weight = args["time_smoothness_weight"]
+        self.lambda_lpips = args["lambda_lpips"]
 
     def train(self):
         self._train(self.coarse_iters, is_fine=False)
@@ -76,6 +83,7 @@ class Trainer:
 
         # train model
         bg_color = torch.tensor([1,1,1], dtype=torch.float32, device="cuda")
+        print(f"gpu usage {print_gpu_memory_usage()}")
         for iter in tqdm(range(num_iters)):
             iter_start.record()
             self.model.update_learning_rate(iter)
@@ -92,7 +100,12 @@ class Trainer:
             radii_list = []
             visibility_filter_list = []
             viewspace_point_tensor_list = []
-            for camera_idx in range(start_idx, len(self.dataset)):
+
+            camera_idx = randint(0, len(self.dataset)-1)
+            iter_cams = [camera_idx] #TODO: this is how its done in endogaussian, rly only one cam per iter
+            # for camera_idx in range(start_idx, len(self.dataset)):
+
+            for camera_idx in iter_cams:
                 camera = self.dataset[camera_idx]
                 render_dict = self.model.render(
                     camera,
@@ -107,9 +120,9 @@ class Trainer:
                 viewspace_point_tensor = render_dict["viewspace_points"]
                 visibility_filter = render_dict["visibility_filter"]
                 radii = render_dict["radii"]
-                gt_image = camera.img.cuda().float()
-                gt_depth = camera.depth_map.cuda().float()
-                mask = camera.mask.cuda()
+                gt_image = torch.from_numpy(camera.img).permute(2,0,1).cuda().float()
+                gt_depth = torch.from_numpy(camera.depth_map).cuda().float()
+                mask = torch.from_numpy(camera.mask).cuda()
 
                 images.append(rendered_image.unsqueeze(0))
                 depths.append(rendered_depth.unsqueeze(0))
@@ -119,6 +132,12 @@ class Trainer:
                 viewspace_point_tensor_list.append(viewspace_point_tensor)
                 radii_list.append(radii)
                 visibility_filter_list.append(visibility_filter)
+
+                #TODO: maybe add debug thing here, or get ri
+                # del gt_image, gt_depth, mask
+                # torch.cuda.empty_cache()
+                # gc.collect()
+                print(f"gpu usage on camera {camera_idx} {print_gpu_memory_usage()}")
             
             radii = torch.cat(radii_list,0).max(dim=0).values
             visibility_filter = torch.cat(visibility_filter_list).any(dim=0)
@@ -135,11 +154,13 @@ class Trainer:
                 depth_loss = torch.tensor(0.).cuda()
             else:
                 #TODO this has previously caused problems
-                rendered_depths_reshape = rendered_depths.reshape(-1, 1)
-                gt_depths_reshape = gt_depths.reshape(-1, 1)
-                mask_tmp = mask.reshape(-1)
-                rendered_depths_reshape, gt_depths_reshape = rendered_depths_reshape[mask_tmp!=0, :], gt_depths_reshape[mask_tmp!=0, :]
-                depth_loss =  0.001 * (1 - PearsonCorrCoef(gt_depths_reshape, rendered_depths_reshape)) #TODO
+                # rendered_depths_reshape = rendered_depths.reshape(-1, 1)
+                # gt_depths_reshape = gt_depths.reshape(-1, 1)
+                # mask_tmp = mask.reshape(-1)
+                # rendered_depths_reshape = rendered_depths_reshape[mask_tmp!=0, :]
+                # gt_depths_reshape = gt_depths_reshape[mask_tmp!=0, :]
+                # depth_loss =  0.001 * (1 - PearsonCorrCoef(gt_depths_reshape, rendered_depths_reshape)) #TODO
+                depth_loss = compute_l1_loss(rendered_depths, gt_depths)
 
             depth_tvloss = compute_TV_loss(rendered_depths)
             img_tvloss = compute_TV_loss(rendered_images)
@@ -149,16 +170,16 @@ class Trainer:
             print(f"PSNR at iter {iter}: {psnr}")
 
             #TODO separate self args out in init of trainer
-            if is_fine and self.args["time_smoothness_weight"] != 0: 
+            if is_fine and self.time_smoothness_weight != 0: 
                 tv_loss = self.model.compute_regulation(2e-2, 2e-2, 2e-2)
                 loss += tv_loss
-            if self.args["lambda_dssim"] != 0:
+            if self.lambda_dssim != 0:
                 ssim_loss = compute_ssim(rendered_images,gt_images) #TODO
-                loss += self.args["lambda_ssim"] * (1.0-ssim_loss)
-            if self.args.lambda_lpips !=0:
+                loss += self.lambda_ssim * (1.0-ssim_loss)
+            if self.lambda_lpips !=0:
                 lpips_model = lpips.LPIPS(net="vgg").cuda()
                 lpipsloss = compute_lpips_loss(rendered_images, gt_images, lpips_model) #TODO lpips loss as well as lpips model
-                loss += self.args["lambda_lpips"] * lpipsloss
+                loss += self.lambda_lpips * lpipsloss
             
             loss.backward()
             viewspace_point_tensor_grad = torch.zeros_like(viewspace_point_tensor)
@@ -166,8 +187,8 @@ class Trainer:
                 viewspace_point_tensor_grad = viewspace_point_tensor_grad + viewspace_point_tensor_list[idx].grad
             iter_end.record()
             
-            # TODO: perform densification and pruning
-            self.model.optimize()
+            # TODO: fill in args for this
+            self.model.optimize(loss, psnr, iter, pbar, num_iters, timer, args, visibility_filter, radii, is_fine, camera_extent)
         
             self.timer.pause()
             # log
