@@ -83,6 +83,15 @@ class PhotoSplatter():
         self.scaling_lr = args['scaling_lr']
         self.rotation_lr = args['rotation_lr']
 
+        # optimization intervals
+        self.densify_interval = args['densify_interval']
+        self.densify_from_iter = args['densify_from_iter']
+        self.densify_until_iter = args['densify_until_iter']
+        self.pruning_interval = args['pruning_interval']
+        self.prune_from_iter = args['prune_from_iter']
+        self.prune_until_iter = args['prune_until_iter']
+        self.opacity_reset_interval = args['opacity_reset_interval']
+
         self.spatial_lr_scale = 0
 
         self.initialize_gaussians()
@@ -335,10 +344,12 @@ class PhotoSplatter():
                 "radii": radii,}
 
 
-    def optimize(self, loss, psnr, iter, pbar, num_iters, timer, args, visibility_filter, radii, is_fine, camera_extent):
+    def optimize(self, loss, psnr, iter, pbar, num_iters, timer, visibility_filter, radii, is_fine, camera_extent):
 
         with torch.no_grad():
             # Progress bar
+            ema_loss_for_log = 0.0
+            ema_psnr_for_log = 0.0 #TODO this can probably be adjusted to better values
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             ema_psnr_for_log = 0.4 * psnr + 0.6 * ema_psnr_for_log
             num_pts = self._means.shape[0]
@@ -377,13 +388,13 @@ class PhotoSplatter():
             densify_thresh = self.density_grad_thresh
 
             # Densify
-            if iter > self.args.densify_from_iter and iter % self.args.densify_interval == 0 and iter < self.densify_until_iter:
+            if iter > self.densify_from_iter and iter % self.densify_interval == 0 and iter < self.densify_until_iter:
                 size_threshold = 20 if iter > self.args.opacity_reset_interval else None #TODO size thresh would be better as a parameter
                 self.densify(densify_thresh, camera_extent) #TODO
                 
             # Prune
-            if iter > self.args.prune_from_iter and iter % self.args.pruning_interval == 0 and iter < self.prune_until_iter:
-                size_threshold = 40 if iter > self.args.opacity_reset_interval else None
+            if iter > self.prune_from_iter and iter % self.pruning_interval == 0 and iter < self.prune_until_iter:
+                size_threshold = 40 if iter > self.opacity_reset_interval else None
                 prune_mask = (self.get_opacity < opacity_thresh).squeeze()
                 if size_threshold:
                     big_points_vs = self.max_radii2D > size_threshold
@@ -393,7 +404,7 @@ class PhotoSplatter():
                 torch.cuda.empty_cache()
                 
             # Reset opacity
-            if iter % self.args.opacity_reset_interval == 0:
+            if iter % self.opacity_reset_interval == 0:
                 print("reset opacity")
                 self.reset_opacity() #TODO
                     
@@ -533,3 +544,30 @@ class PhotoSplatter():
         self._deform_mask = self._deform_mask[valid_points_mask]
         self.denom = self.denom[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
+
+    def reset_opacity(self):
+        """
+        Reset opacities via inverse sigmoid and get rid of momentum terms
+        exp_avg and exp_avg_sq in optimizer, or reset to .01 if too low.
+        """
+        opacities_new = inverse_sigmoid(torch.min(self._opacities, torch.ones_like(self._opacities)*0.01))
+
+        # replace tensor to optimizer
+        optimizable_tensors = {}
+        for group in self.optimizer.param_groups:
+            if group["name"] == "opacity":
+                stored_state = self.optimizer.state.get(group['params'][0], {})
+                stored_state["exp_avg"] = torch.zeros_like(opacities_new)
+                stored_state["exp_avg_sq"] = torch.zeros_like(opacities_new)
+
+                if group['params'][0] in self.optimizer.state:
+                    del self.optimizer.state[group['params'][0]]
+                group["params"][0] = torch.nn.Parameter(opacities_new.requires_grad_(True))
+                self.optimizer.state[group['params'][0]] = stored_state
+
+                optimizable_tensors[group["name"]] = group["params"][0]
+
+        self._opacities = optimizable_tensors["opacity"]
+
+
+        

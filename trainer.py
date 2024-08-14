@@ -66,6 +66,7 @@ class Trainer:
         self.time_smoothness_weight = args["time_smoothness_weight"]
         self.lambda_lpips = args["lambda_lpips"]
 
+
     def train(self):
         self._train(self.coarse_iters, is_fine=False)
         self._train(self.fine_iters, is_fine=True)
@@ -80,6 +81,7 @@ class Trainer:
         iter_start = torch.cuda.Event(enable_timing = True)
         iter_end = torch.cuda.Event(enable_timing = True)
         self.timer.start()
+        pbar = tqdm()
 
         # train model
         bg_color = torch.tensor([1,1,1], dtype=torch.float32, device="cuda")
@@ -188,7 +190,7 @@ class Trainer:
             iter_end.record()
             
             # TODO: fill in args for this
-            self.model.optimize(loss, psnr, iter, pbar, num_iters, timer, args, visibility_filter, radii, is_fine, camera_extent)
+            self.model.optimize(loss, psnr, iter, pbar, num_iters, self.timer, visibility_filter, radii, is_fine, self.dataset.camera_extent)
         
             self.timer.pause()
             # log
